@@ -80,6 +80,39 @@ void getJoystickInput(SDL_Joystick* joy, buttonHistory buttonStory[], int *shoul
 			fprintf(stderr,"Axis %d is %d\n", i, n);
 		DONE:;
 	}
+	
+	for(i=0; i<SDL_JoystickNumHats(joy); i++) {
+		switch(SDL_JoystickGetHat(joy, i)) {
+			case SDL_HAT_CENTERED:
+				break; //Nothing to be done
+			case SDL_HAT_UP:
+				fprintf(stderr,"Hat%d up",i);
+				break;
+			case SDL_HAT_RIGHT:
+				fprintf(stderr,"Hat%d right",i);
+				break;
+			case SDL_HAT_DOWN:
+				fprintf(stderr,"Hat%d down",i);
+				break;
+			case SDL_HAT_LEFT:
+				fprintf(stderr,"Hat%d left",i);
+				break;
+			case SDL_HAT_RIGHTUP:
+				fprintf(stderr,"Hat%d rightup",i);
+				break;
+			case SDL_HAT_RIGHTDOWN:
+				fprintf(stderr,"Hat%d rightdown",i);
+				break;
+			case SDL_HAT_LEFTUP:
+				fprintf(stderr,"Hat%d leftup",i);
+				break;
+			case SDL_HAT_LEFTDOWN:
+				fprintf(stderr,"Hat%d leftdown",i);
+				break;
+		}
+	}
+				
+		
 }
 
 int main() {
