@@ -104,15 +104,14 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 			timersub(new, joyState->buttons[i].lastUpdate, &diff);
 			if(diff.tv_usec>joyState->debounce || diff.tv_sec>=1) {
 				joyState->buttons[i].state = n;
-				//free(joyState->buttons[i].lastUpdate);
-				joyState->buttons[i].lastUpdate = new;
+				memcpy(joyState->buttons[i].lastUpdate, new, sizeof(struct timeval));
 				fprintf(stderr,"Button %d goes to state %d\n", i, n);
 				changed = 1;
 				
 			}
 		}
 	}
-			
+	free(new);
 			
 	
 	for(i=0; i<joyState->numAxes; i++) {
@@ -194,10 +193,12 @@ int main() {
 		SDL_Delay(1);
 	}
 	printf("wazza?\n");
-	/*
+	
+	//Should maybe write a free func to free everything
+	//To easily check for memleaks
 	SDL_JoystickClose(joy);
 	SDL_Quit();
-	*/
+	
 	return 0;
 }
  
