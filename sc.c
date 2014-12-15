@@ -3,19 +3,52 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <SDL/SDL.h>
+#include <limits.h>
 
-const int deadzone = 6000;
-const int debounce = 0; //In microseconds, not needed for xbox360 contr.
-const int shoulder[2] = {2,5};
-const int shoulders = 2;
+const int deadzoneA = 6000;
+const int debounceA = 0; //In microseconds, not needed for xbox360 contr.
+//const int shoulder[2] = {2,5};
+//const int shoulders = 2;
+const int hatState[] = {SDL_HAT_CENTERED, SDL_HAT_UP, SDL_HAT_RIGHT, SDL_HAT_DOWN, SDL_HAT_LEFT, SDL_HAT_RIGHTUP, SDL_HAT_RIGHTDOWN, SDL_HAT_LEFTUP, SDL_HAT_LEFTDOWN};
+int hatStates = 9;
 
-typedef struct buttonHistory {
+typedef struct button {
 	int state; //1 For pressed, 0 for depressed
-	struct timeval time;
-} buttonHistory;
+	struct timeval *lastUpdate;
+} button;
 
-SDL_Joystick* init() {
-	SDL_Joystick *joy;
+typedef struct shoulder {
+	int used;
+	int value;
+} shoulder;
+
+typedef struct hat {
+	int state;
+} hat;
+
+typedef struct axis {
+	int value;
+} axis;
+
+typedef struct ctrlState {
+	button	*buttons;
+	axis						*axes;
+	shoulder			*shoulders;
+	hat						*hats;
+	int						numButtons;
+	int						numAxes;
+	int						numShoulders;
+	int						*shoulderNr;
+	int						numHats;
+	int						debounce;
+	int						deadzone;
+} ctrlState;
+
+ctrlState* init(SDL_Joystick **joy) {
+	ctrlState *joyState;
+	int i;
+	
+
 	
 	if(SDL_Init(SDL_INIT_JOYSTICK) < 0) {
 		fprintf(stderr,"Could not initialize SDL Joystick: %s\n", SDL_GetError());
@@ -24,13 +57,25 @@ SDL_Joystick* init() {
 	
 	fprintf(stderr,"joysticks found: %d\n", SDL_NumJoysticks());
 	
-	joy = SDL_JoystickOpen(0);
+	*joy = SDL_JoystickOpen(0);
 	if(joy == NULL) {
 		fprintf(stderr,"Could not open joystick\n");
 		return NULL;
 	}
-
-	return joy;
+	
+	joyState = calloc(sizeof(ctrlState), 1);
+	joyState->numAxes = SDL_JoystickNumAxes(*joy);
+	joyState->numHats = SDL_JoystickNumHats(*joy);
+	joyState->numButtons = SDL_JoystickNumButtons(*joy);
+	joyState->axes = calloc(joyState->numAxes, sizeof(axis));
+	joyState->hats = calloc(joyState->numHats, sizeof(hat));
+	joyState->buttons = calloc(joyState->numButtons, sizeof(button));
+	for(i=0; i<=joyState->numButtons; i++) {
+		joyState->buttons[i].lastUpdate = malloc(sizeof(struct timeval));
+		gettimeofday(joyState->buttons[i].lastUpdate, NULL);
+		joyState->buttons[i].state = 0;
+	}
+	return joyState;
 }
 
 void checkJoystick(SDL_Joystick *joy) {
@@ -42,109 +87,113 @@ void checkJoystick(SDL_Joystick *joy) {
 }
 
 
-void getJoystickInput(SDL_Joystick* joy, buttonHistory buttonStory[], int *shoulderStory) {
+int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 	int i,j,n;
-	struct timeval new,diff;
+	struct timeval *new,diff;
+	int changed = 0;
+	int newState;
+	
+	new = malloc(sizeof(struct timeval));
 	
 	SDL_JoystickUpdate();
 	
-	for(i=0; i<=SDL_JoystickNumButtons(joy); i++) {
+	for(i=0; i<=joyState->numButtons; i++) {
 		n = SDL_JoystickGetButton(joy, i);
-		if(buttonStory[i].state != n) {
-			gettimeofday(&new, NULL);
-			timersub(&new, &(buttonStory[i].time), &diff);
-			if(diff.tv_usec>debounce || diff.tv_sec>=1) {
-				buttonStory[i].state = n;
+		if(joyState->buttons[i].state != n) {
+			gettimeofday(new, NULL);
+			timersub(new, joyState->buttons[i].lastUpdate, &diff);
+			if(diff.tv_usec>joyState->debounce || diff.tv_sec>=1) {
+				joyState->buttons[i].state = n;
+				//free(joyState->buttons[i].lastUpdate);
+				joyState->buttons[i].lastUpdate = new;
 				fprintf(stderr,"Button %d goes to state %d\n", i, n);
+				changed = 1;
+				
 			}
 		}
 	}
 			
 			
 	
-	for(i=0; i<SDL_JoystickNumAxes(joy); i++) {
-		for(j=0; j<shoulders; j++) {
-			if(i == shoulder[j]) {
+	for(i=0; i<joyState->numAxes; i++) {
+		for(j=0; j<joyState->numShoulders; j++) {
+			if(i == joyState->shoulderNr[j]) {
 				n = SDL_JoystickGetAxis(joy, i);
-				if(n == 0 && shoulderStory[i] == 0)
+				if(n == 0 && joyState->shoulders[i].used == 0)
 					goto DONE;
 				n += 32768;
-				shoulderStory[i] = 1;
-				if( abs(n)>deadzone)
+				joyState->shoulders[i].used = 1;
+				if( abs(n)>joyState->deadzone) {
+					joyState->shoulders[i].value = n;
 					fprintf(stderr,"Shoulder Axis %d is %d\n", i, n);
+					changed = 1;
+				}
 				goto DONE;
 			}
 		}
 		n = SDL_JoystickGetAxis(joy, i);
-		if( abs(n)>deadzone)
+		if( abs(n)>joyState->deadzone) {
+			joyState->axes[i].value = n;
 			fprintf(stderr,"Axis %d is %d\n", i, n);
+			changed =1;
+		}
 		DONE:;
 	}
 	
+
+
 	for(i=0; i<SDL_JoystickNumHats(joy); i++) {
-		switch(SDL_JoystickGetHat(joy, i)) {
-			case SDL_HAT_CENTERED:
-				break; //Nothing to be done
-			case SDL_HAT_UP:
-				fprintf(stderr,"Hat%d up",i);
-				break;
-			case SDL_HAT_RIGHT:
-				fprintf(stderr,"Hat%d right",i);
-				break;
-			case SDL_HAT_DOWN:
-				fprintf(stderr,"Hat%d down",i);
-				break;
-			case SDL_HAT_LEFT:
-				fprintf(stderr,"Hat%d left",i);
-				break;
-			case SDL_HAT_RIGHTUP:
-				fprintf(stderr,"Hat%d rightup",i);
-				break;
-			case SDL_HAT_RIGHTDOWN:
-				fprintf(stderr,"Hat%d rightdown",i);
-				break;
-			case SDL_HAT_LEFTUP:
-				fprintf(stderr,"Hat%d leftup",i);
-				break;
-			case SDL_HAT_LEFTDOWN:
-				fprintf(stderr,"Hat%d leftdown",i);
-				break;
+		newState = SDL_JoystickGetHat(joy, i);
+		for(j=0; j<hatStates; j++) {
+			if(newState == hatState[j] && joyState->hats[i].state != newState) {
+				fprintf(stderr, "Released hat %d\n", joyState->hats[i].state);
+				fprintf(stderr, "Pressed hat %d\n", newState);
+				joyState->hats[i].state = newState;
+				changed =1;
+			}
 		}
 	}
-				
+			
 		
+	return(changed);
 }
 
 int main() {
-	int i;
-	buttonHistory *buttonStory;
-	int *shoulderStory;
+	int i, changed;
 	SDL_Joystick *joy;
+	ctrlState *joyState;
 	
-	joy = init();
+	joyState = init(&joy);
 	if(joy == NULL)
 		exit(1);
 	checkJoystick(joy);
 	
-	int axes = SDL_JoystickNumAxes(joy);
-	shoulderStory = calloc(axes, sizeof(int));
+	//Stuff that should be done in init when conf parse is created.
+	joyState->numShoulders = 2;
+	joyState->shoulders = calloc(joyState->numShoulders, sizeof(shoulder));
+	joyState->shoulderNr = calloc(joyState->numAxes, sizeof(axis));
+	joyState->deadzone = deadzoneA;
+	joyState->debounce = debounceA;
 	
-	int buttons = SDL_JoystickNumButtons(joy);
-	buttonStory = calloc(buttons, sizeof(struct buttonHistory));
-	for(i=0; i<=SDL_JoystickNumButtons(joy); i++) {
-		gettimeofday(&buttonStory[i].time, NULL);
-		buttonStory[i].state = 0;
-	}
+	joyState->shoulderNr[0] = 2;
+	joyState->shoulderNr[1] = 5;
 	
+	//dunno where this should go
 	if(SDL_JoystickEventState(SDL_IGNORE) < 0) {
 		fprintf(stderr, "Cannot enter event state: %s\n", SDL_GetError());
 		exit(1);
 	}
 	
+	
 	while(1) {
-		getJoystickInput(joy, buttonStory, shoulderStory);
+		changed = getJoystickInput(joy, joyState);
+		if(changed)
+			fprintf(stderr,"Response!\n");
+		if(joyState->buttons[3].state == 1)
+			break;
 		SDL_Delay(1);
 	}
+	printf("wazza?\n");
 	/*
 	SDL_JoystickClose(joy);
 	SDL_Quit();
