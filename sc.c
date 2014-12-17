@@ -5,12 +5,14 @@
 #include <SDL/SDL.h>
 #include <limits.h>
 
-const int deadzoneA = 6000;
-const int debounceA = 0; //In microseconds, not needed for xbox360 contr.
+const int deadzone = 1800;
+const int axisRes = 180; //Max axis +- resolution... Maximum possible value is SHRT_INT
+const int debounce = 0; //In microseconds, not needed for xbox360 contr.
 //const int shoulder[2] = {2,5};
 //const int shoulders = 2;
 const int hatState[] = {SDL_HAT_CENTERED, SDL_HAT_UP, SDL_HAT_RIGHT, SDL_HAT_DOWN, SDL_HAT_LEFT, SDL_HAT_RIGHTUP, SDL_HAT_RIGHTDOWN, SDL_HAT_LEFTUP, SDL_HAT_LEFTDOWN};
-int hatStates = 9;
+const int hatStates = 9;
+double axisMinChange;
 
 typedef struct button {
 	int state; //1 For pressed, 0 for depressed
@@ -43,6 +45,10 @@ typedef struct ctrlState {
 	int						debounce;
 	int						deadzone;
 } ctrlState;
+
+send(char type, int num, int val) {
+	fprintf(stderr, "%c%d: %d\n",type,num,val);
+}
 
 ctrlState* init(SDL_Joystick **joy) {
 	ctrlState *joyState;
@@ -104,8 +110,8 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 			timersub(new, joyState->buttons[i].lastUpdate, &diff);
 			if(diff.tv_usec>joyState->debounce || diff.tv_sec>=1) {
 				joyState->buttons[i].state = n;
+				send('b',i,n);
 				memcpy(joyState->buttons[i].lastUpdate, new, sizeof(struct timeval));
-				fprintf(stderr,"Button %d goes to state %d\n", i, n);
 				changed = 1;
 				
 			}
@@ -120,21 +126,33 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 				n = SDL_JoystickGetAxis(joy, i);
 				if(n == 0 && joyState->shoulders[i].used == 0)
 					goto DONE;
-				n += 32768;
+				n += 	SHRT_MAX;
 				joyState->shoulders[i].used = 1;
 				if( abs(n)>joyState->deadzone) {
-					joyState->shoulders[i].value = n;
-					fprintf(stderr,"Shoulder Axis %d is %d\n", i, n);
-					changed = 1;
+					if(abs(joyState->shoulders[i].value - n/axisMinChange)>1) {
+						joyState->shoulders[i].value = n/axisMinChange;
+						send('a',i,n/axisMinChange);
+						changed = 1;
+					}
+				} else if(joyState->shoulders[i].value != 0) {
+						joyState->shoulders[i].value = 0;
+						send('a',i,0);
+						changed = 1;
 				}
 				goto DONE;
 			}
 		}
 		n = SDL_JoystickGetAxis(joy, i);
-		if( abs(n)>joyState->deadzone) {
-			joyState->axes[i].value = n;
-			fprintf(stderr,"Axis %d is %d\n", i, n);
-			changed =1;
+		if(abs(n)>joyState->deadzone) {
+			if(abs(joyState->axes[i].value - n/axisMinChange)>1) {
+				joyState->axes[i].value = n/axisMinChange;
+				send('a',i,n/axisMinChange);
+				changed = 1;
+			}
+		} else if(joyState->axes[i].value != 0) {
+			joyState->axes[i].value = 0;
+			send('a',i,0);
+			changed = 1;
 		}
 		DONE:;
 	}
@@ -145,9 +163,8 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 		newState = SDL_JoystickGetHat(joy, i);
 		for(j=0; j<hatStates; j++) {
 			if(newState == hatState[j] && joyState->hats[i].state != newState) {
-				fprintf(stderr, "Released hat %d\n", joyState->hats[i].state);
-				fprintf(stderr, "Pressed hat %d\n", newState);
 				joyState->hats[i].state = newState;
+				send('h',i,newState);
 				changed =1;
 			}
 		}
@@ -161,6 +178,7 @@ int main() {
 	int i, changed;
 	SDL_Joystick *joy;
 	ctrlState *joyState;
+
 	
 	joyState = init(&joy);
 	if(joy == NULL)
@@ -168,11 +186,14 @@ int main() {
 	checkJoystick(joy);
 	
 	//Stuff that should be done in init when conf parse is created.
+	axisMinChange = SHRT_MAX/axisRes;
+	printf("axisMinChange: %f\n", axisMinChange);
+	printf("Int_max %d, axisRes %d \n", SHRT_MAX , axisRes);
 	joyState->numShoulders = 2;
 	joyState->shoulders = calloc(joyState->numShoulders, sizeof(shoulder));
 	joyState->shoulderNr = calloc(joyState->numAxes, sizeof(axis));
-	joyState->deadzone = deadzoneA;
-	joyState->debounce = debounceA;
+	joyState->deadzone = deadzone;
+	joyState->debounce = debounce;
 	
 	joyState->shoulderNr[0] = 2;
 	joyState->shoulderNr[1] = 5;
@@ -186,10 +207,6 @@ int main() {
 	
 	while(1) {
 		changed = getJoystickInput(joy, joyState);
-		if(changed)
-			fprintf(stderr,"Response!\n");
-		if(joyState->buttons[3].state == 1)
-			break;
 		SDL_Delay(1);
 	}
 	printf("wazza?\n");
