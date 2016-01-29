@@ -3,4 +3,4 @@ CFLAGS = -g -O0
 LOADLIBES = -lSDL -lconfuse
 
 
-sc: sc.o 
+sc: sc.o arduino-serial-lib.o

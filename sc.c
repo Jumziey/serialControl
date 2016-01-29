@@ -6,13 +6,19 @@
 #include <limits.h>
 #include <confuse.h> //Config parser
 #include <limits.h>
+#include <signal.h>
+#include "arduino-serial-lib.h"
 
 #include <unistd.h>
 
 const int hatState[] = {SDL_HAT_CENTERED, SDL_HAT_UP, SDL_HAT_RIGHT, SDL_HAT_DOWN, SDL_HAT_LEFT, SDL_HAT_RIGHTUP, SDL_HAT_RIGHTDOWN, SDL_HAT_LEFTUP, SDL_HAT_LEFTDOWN};
 const int hatStates = 9;
 
+//Some globals i haven't decided if im lazy to have them here
+//Or if its actually beautiful (fuck you if you hate globals by principle)
 double axisMinChange;
+int portFd;
+int testRun;
 
 typedef struct button {
 	int state; //1 For pressed, 0 for depressed
@@ -47,7 +53,13 @@ typedef struct ctrlState {
 } ctrlState;
 
 send(char type, int num, int val) {
-	fprintf(stderr, "%c%d:%d\n",type,num,val);
+	if(testRun) {
+		fprintf(stderr, "%c%d:%d\n",type,num,val);
+	} else {
+		char* buf = calloc(20, sizeof(char));
+		sprintf(buf, "%c%d:%d\n",type,num,val);
+		serialport_write(portFd, buf);
+	}
 }
 
 ctrlState* init(SDL_Joystick **joy) {
@@ -171,11 +183,13 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 }
 
 typedef struct ctrlConf {
+	int testRun;
 	int deadzone;
 	int axisRes;
 	int debounce;
 	int numShoulders;
 	int* shoulderNr;
+	char* port;
 } ctrlConf;
 
 ctrlConf*
@@ -188,6 +202,7 @@ readConf(char* conf) {
 	//Define config
 	cfg_opt_t opts[] = 
 	{
+		CFG_INT("testRun", 0, CFGF_NONE),
 		CFG_INT("deadzone", 0, CFGF_NONE),
 		CFG_INT("axisRes", 0, CFGF_NONE),
 		CFG_INT("debounce", 0, CFGF_NONE),
@@ -202,6 +217,7 @@ readConf(char* conf) {
 		return NULL;
 	
 	//Assign config values
+	joyConf->testRun = (int)cfg_getint(cfg, "testRun");
 	joyConf->deadzone = (int)cfg_getint(cfg, "deadzone");
 	joyConf->axisRes = (int)cfg_getint(cfg, "axisRes");
 	joyConf->debounce = (int)cfg_getint(cfg, "debounce");
@@ -213,19 +229,36 @@ readConf(char* conf) {
 
 	return joyConf;
 }
+
+
+
+void shutdown(int sig) {
+	close(portFd);
+	printf("IM SHUTTING DOWN!\n");
+	sleep(2);
+	exit(0);
+}
 	
-int main() {
-	int i, changed;
+
+int main(int argc, char **argv) {
+	int i, changed, c;
+	char* confFile;
 	SDL_Joystick *joy;
 	ctrlState *joyState;
 	ctrlConf *joyConf;
-
+	
+	if(argc != 2) {
+		fprintf(stderr, "takes one and only one argument... THE CONFIG FILE!!!\n");
+		exit(1);
+	}
+	confFile = argv[1];
+	
 	joyState = init(&joy);
 	if(joy == NULL)
 		exit(1);
 	checkJoystick(joy);
 
-	if(!(joyConf = readConf("360.conf"))) {
+	if(!(joyConf = readConf(confFile))) {
 		exit(1);
 	}
 
@@ -246,6 +279,27 @@ int main() {
 		fprintf(stderr, "Cannot enter event state: %s\n", SDL_GetError());
 		exit(1);
 	}
+	
+	//Establish serial contact if this is not a testRun
+	testRun = joyConf->testRun;
+	if(!testRun) {
+		if((portFd = serialport_init("/dev/ttyACM0", 9600))==-1)
+			exit(1);
+		
+		char* buf = calloc(20, sizeof(char));
+		int notConnected = 1;
+		while(notConnected){
+			printf("connecting...\n");
+			serialport_write(portFd, "#");
+			serialport_read_until(portFd, buf, 'C', 20, 3000);
+			if(!strcmp(buf, "C"))
+				notConnected = 0;
+			}
+		printf("connected\n");
+	}
+
+	//Just to make sure the program disconnects
+	signal(SIGINT, shutdown);
 	
 	while(1) {
 		changed = getJoystickInput(joy, joyState);
