@@ -52,12 +52,14 @@ void loop()
 		  //All axes except shoudlers
       case 'a': 
       	switch(Serial.read()) {
-      		case '0':
+      		case '1':
       			//Whatever axis 0 should do
+      			servoLeft.write(Serial.parseInt()+45);
       			//Recommend Serial.parseInt() to read numerical value
         		break;
-        	case '1':
+        	case '4':
         		//Whatever axis 1 should do... etc
+						servoRight.write(Serial.parseInt()+45);
         		//Recommend Serial.parseInt() to read numerical value
         		break;
         	default:;
@@ -66,17 +68,16 @@ void loop()
       case 's': 
         switch(Serial.read()) {
         	case '0':
-        		servoLeft.write(Serial.parseInt()/2+5);
+        		//servoLeft.write(Serial.parseInt()/2+5);
         		break;
         	case '1':
-        		servoRight.write(Serial.parseInt()/2+5);
+        		//servoRight.write(Serial.parseInt()/2+5);
         		break;
         	default:;
         }
         
       default:;
     }
-    Serial.flush();
   }
   delay(10);
 }

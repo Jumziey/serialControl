@@ -303,7 +303,7 @@ int main(int argc, char **argv) {
 	
 	while(1) {
 		changed = getJoystickInput(joy, joyState);
-		SDL_Delay(1);
+		SDL_Delay(30);
 	}
 	
 	//Should maybe write a free func to free everything
