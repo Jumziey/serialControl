@@ -4,14 +4,14 @@
 #include <sys/time.h>
 #include <SDL/SDL.h>
 #include <limits.h>
+#include <confuse.h> //Config parser
+#include <limits.h>
 
-const int deadzone = 1800;
-const int axisRes = 180; //Max axis +- resolution... Maximum possible value is SHRT_INT
-const int debounce = 0; //In microseconds, not needed for xbox360 contr.
-//const int shoulder[2] = {2,5};
-//const int shoulders = 2;
+#include <unistd.h>
+
 const int hatState[] = {SDL_HAT_CENTERED, SDL_HAT_UP, SDL_HAT_RIGHT, SDL_HAT_DOWN, SDL_HAT_LEFT, SDL_HAT_RIGHTUP, SDL_HAT_RIGHTDOWN, SDL_HAT_LEFTUP, SDL_HAT_LEFTDOWN};
 const int hatStates = 9;
+
 double axisMinChange;
 
 typedef struct button {
@@ -33,8 +33,8 @@ typedef struct axis {
 } axis;
 
 typedef struct ctrlState {
-	button	*buttons;
-	axis						*axes;
+	button				*buttons;
+	axis					*axes;
 	shoulder			*shoulders;
 	hat						*hats;
 	int						numButtons;
@@ -47,14 +47,12 @@ typedef struct ctrlState {
 } ctrlState;
 
 send(char type, int num, int val) {
-	fprintf(stderr, "%c%d: %d\n",type,num,val);
+	fprintf(stderr, "%c%d:%d\n",type,num,val);
 }
 
 ctrlState* init(SDL_Joystick **joy) {
 	ctrlState *joyState;
 	int i;
-	
-
 	
 	if(SDL_Init(SDL_INIT_JOYSTICK) < 0) {
 		fprintf(stderr,"Could not initialize SDL Joystick: %s\n", SDL_GetError());
@@ -92,7 +90,6 @@ void checkJoystick(SDL_Joystick *joy) {
 	return;
 }
 
-
 int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 	int i,j,n;
 	struct timeval *new,diff;
@@ -118,25 +115,24 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 		}
 	}
 	free(new);
-			
-	
+
 	for(i=0; i<joyState->numAxes; i++) {
 		for(j=0; j<joyState->numShoulders; j++) {
 			if(i == joyState->shoulderNr[j]) {
 				n = SDL_JoystickGetAxis(joy, i);
-				if(n == 0 && joyState->shoulders[i].used == 0)
+				if(n == 0 && joyState->shoulders[j].used == 0)
 					goto DONE;
 				n += 	SHRT_MAX;
-				joyState->shoulders[i].used = 1;
+				joyState->shoulders[j].used = 1;
 				if( abs(n)>joyState->deadzone) {
-					if(abs(joyState->shoulders[i].value - n/axisMinChange)>1) {
-						joyState->shoulders[i].value = n/axisMinChange;
-						send('a',i,n/axisMinChange);
+					if(abs(joyState->shoulders[j].value - n/axisMinChange)>1) {
+						joyState->shoulders[j].value = n/axisMinChange;
+						send('s',j,n/axisMinChange);
 						changed = 1;
 					}
-				} else if(joyState->shoulders[i].value != 0) {
-						joyState->shoulders[i].value = 0;
-						send('a',i,0);
+				} else if(joyState->shoulders[j].value != 0) {
+						joyState->shoulders[j].value = 0;
+						send('s',j,0);
 						changed = 1;
 				}
 				goto DONE;
@@ -155,8 +151,8 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 			changed = 1;
 		}
 		DONE:;
-	}
 	
+	}
 
 
 	for(i=0; i<SDL_JoystickNumHats(joy); i++) {
@@ -174,29 +170,76 @@ int getJoystickInput(SDL_Joystick* joy, ctrlState *joyState) {
 	return(changed);
 }
 
+typedef struct ctrlConf {
+	int deadzone;
+	int axisRes;
+	int debounce;
+	int numShoulders;
+	int* shoulderNr;
+} ctrlConf;
+
+ctrlConf*
+readConf(char* conf) {
+	int i;
+	ctrlConf* joyConf;
+	
+	joyConf = malloc(sizeof(ctrlConf));
+	
+	//Define config
+	cfg_opt_t opts[] = 
+	{
+		CFG_INT("deadzone", 0, CFGF_NONE),
+		CFG_INT("axisRes", 0, CFGF_NONE),
+		CFG_INT("debounce", 0, CFGF_NONE),
+		CFG_INT_LIST("shoulderNr", NULL, CFGF_NONE),
+		CFG_END()
+	};
+	cfg_t *cfg;
+
+	//Parse config
+	cfg = cfg_init(opts, CFGF_NONE);
+	if(cfg_parse(cfg, "360.conf") == CFG_PARSE_ERROR)
+		return NULL;
+	
+	//Assign config values
+	joyConf->deadzone = (int)cfg_getint(cfg, "deadzone");
+	joyConf->axisRes = (int)cfg_getint(cfg, "axisRes");
+	joyConf->debounce = (int)cfg_getint(cfg, "debounce");
+	joyConf->numShoulders = (int)cfg_size(cfg, "shoulderNr");
+	
+	joyConf->shoulderNr = calloc(joyConf->numShoulders, sizeof(int));
+	for(i=0; i<joyConf->numShoulders; i++)
+		joyConf->shoulderNr[i] = cfg_getnint(cfg, "shoulderNr", i);
+
+	return joyConf;
+}
+	
 int main() {
 	int i, changed;
 	SDL_Joystick *joy;
 	ctrlState *joyState;
+	ctrlConf *joyConf;
 
-	
 	joyState = init(&joy);
 	if(joy == NULL)
 		exit(1);
 	checkJoystick(joy);
-	
+
+	if(!(joyConf = readConf("360.conf"))) {
+		exit(1);
+	}
+
 	//Stuff that should be done in init when conf parse is created.
-	axisMinChange = SHRT_MAX/axisRes;
+	axisMinChange = SHRT_MAX/joyConf->axisRes;
 	printf("axisMinChange: %f\n", axisMinChange);
-	printf("Int_max %d, axisRes %d \n", SHRT_MAX , axisRes);
-	joyState->numShoulders = 2;
+	joyState->numShoulders = joyConf->numShoulders;
 	joyState->shoulders = calloc(joyState->numShoulders, sizeof(shoulder));
-	joyState->shoulderNr = calloc(joyState->numAxes, sizeof(axis));
-	joyState->deadzone = deadzone;
-	joyState->debounce = debounce;
+	joyState->shoulderNr = calloc(joyState->numShoulders, sizeof(int));
+	joyState->deadzone = joyConf->deadzone;
+	joyState->debounce = joyConf->debounce;
 	
-	joyState->shoulderNr[0] = 2;
-	joyState->shoulderNr[1] = 5;
+	joyState->shoulderNr[0] = joyConf->shoulderNr[0];
+	joyState->shoulderNr[1] = joyConf->shoulderNr[1];
 	
 	//dunno where this should go
 	if(SDL_JoystickEventState(SDL_IGNORE) < 0) {
@@ -204,12 +247,10 @@ int main() {
 		exit(1);
 	}
 	
-	
 	while(1) {
 		changed = getJoystickInput(joy, joyState);
 		SDL_Delay(1);
 	}
-	printf("wazza?\n");
 	
 	//Should maybe write a free func to free everything
 	//To easily check for memleaks
@@ -218,4 +259,3 @@ int main() {
 	
 	return 0;
 }
- 

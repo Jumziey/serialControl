@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -g -O0
-LOADLIBES = -lSDL
+LOADLIBES = -lSDL -lconfuse
 
 
 sc: sc.o 
